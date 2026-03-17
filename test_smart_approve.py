@@ -177,6 +177,18 @@ class TestExtractSubshells:
         subs = extract_subshells("git status --short")
         assert subs == []
 
+    def test_arithmetic_not_extracted(self):
+        """$((...)) is arithmetic, not a subshell — should not be extracted."""
+        subs = extract_subshells("echo $((4 - 1))")
+        assert subs == []
+
+    def test_arithmetic_mixed_with_subshell(self):
+        """$() subshells should still be extracted alongside $((...)) arithmetic."""
+        subs = extract_subshells("echo $(seq 1 $((4 - 1)))")
+        assert "seq 1 $((4 - 1))" in subs
+        # The arithmetic should NOT be extracted as its own separate subshell
+        assert len(subs) == 1
+
     def test_multiple_subshells(self):
         subs = extract_subshells("echo $(git branch) and $(git status)")
         assert "git branch" in subs
@@ -1123,3 +1135,79 @@ class TestIntegrationProjectSettings:
         )
         assert result.returncode == 0
         assert result.stdout.strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# Bug #4: Backslash-escaped quotes in split_on_operators
+# ---------------------------------------------------------------------------
+
+class TestBug4BackslashEscapedQuotes:
+    """Regression tests for backslash-escaped quote handling."""
+
+    def test_escaped_quote_in_double_quoted_string(self):
+        r"""echo "hello \" world | bye" should not split on |."""
+        cmd = r'echo "hello \" world | bye"'
+        segments = split_on_operators(cmd)
+        assert len(segments) == 1
+        assert "|" in segments[0]
+
+    def test_escaped_quote_does_not_toggle_state(self):
+        r"""echo "foo=\"bar\" | baz" stays one segment."""
+        cmd = r'echo "foo=\"bar\" | baz"'
+        segments = split_on_operators(cmd)
+        assert len(segments) == 1
+
+    def test_escaped_backslash_then_quote(self):
+        r"""echo "foo\\\\" | cat SHOULD split — \\\\ consumes the backslash, leaving " as real quote close."""
+        cmd = r'echo "foo\\" | cat'
+        segments = split_on_operators(cmd)
+        assert len(segments) == 2
+        assert segments[1].strip() == "cat"
+
+    def test_single_quote_backslash_literal(self):
+        r"""echo '\"|' — backslash is literal inside single quotes."""
+        cmd = r"""echo '\"|'"""
+        segments = split_on_operators(cmd)
+        assert len(segments) == 1
+
+    def test_loki_query_reproduction(self):
+        """The exact user command that triggered this bug — decompose should produce only valid sub-commands."""
+        cmd = (
+            r'''QUERY=$(python3 -c "import urllib.parse; print(urllib.parse.quote('sum(count_over_time({namespace=\"staging\"} |~ \"\\\\\"level\\\\\":(50|60)\"[8h])) by (app)'))") '''
+            r'''&& kubectl exec -n loki loki-0 --context buff-staging-eks -- wget -qO- "http://localhost:3100/loki/api/v1/query?query=${QUERY}" 2>&1 '''
+            r'''| python3 -c "'''
+            "\n"
+            r"""   import sys,json"""
+            "\n"
+            r"""   d=json.load(sys.stdin)"""
+            "\n"
+            r"""   results=d['data']['result']"""
+            "\n"
+            r"""   results.sort(key=lambda r: int(r['value'][1]), reverse=True)"""
+            "\n"
+            r"""   total=sum(int(r['value'][1]) for r in results)"""
+            "\n"
+            r"""   print(f'Staging Loki Error Report (last 8h) - Total: {total} errors')"""
+            "\n"
+            r"""   print('---')"""
+            "\n"
+            r"""   for r in results:"""
+            "\n"
+            r"""       app=r['metric'].get('app','?')"""
+            "\n"
+            r"""       count=r['value'][1]"""
+            "\n"
+            r"""       print(f'  {app}: {count}')"""
+            "\n"
+            r"""   if not results:"""
+            "\n"
+            r"""       print('  No errors found!')"""
+            "\n"
+            r'''   "'''
+        )
+        subs = decompose_command(cmd)
+        # Should produce exactly: python3, kubectl exec, python3
+        cmd_prefixes = [s.split()[0] for s in subs]
+        assert all(p in ("python3", "kubectl") for p in cmd_prefixes), (
+            f"Unexpected sub-command prefixes: {cmd_prefixes}\nFull subs: {subs}"
+        )

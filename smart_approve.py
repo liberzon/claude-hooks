@@ -131,10 +131,11 @@ def extract_subshells(command):
     """
     subshells = []
 
-    # Extract $(...) — handle nested parens
+    # Extract $(...) — handle nested parens, but skip $((...)) arithmetic
     i = 0
     while i < len(command):
-        if command[i] == '$' and i + 1 < len(command) and command[i + 1] == '(':
+        if command[i] == '$' and i + 1 < len(command) and command[i + 1] == '(' \
+                and not (i + 2 < len(command) and command[i + 2] == '('):
             # Find matching closing paren
             depth = 0
             start = i + 2
@@ -218,6 +219,13 @@ def split_on_operators(command):
 
     while i < len(command):
         ch = command[i]
+
+        # Handle backslash escaping (not inside single quotes, where \ is literal)
+        if ch == '\\' and not in_single_quote and i + 1 < len(command):
+            current.append(ch)
+            current.append(command[i + 1])
+            i += 2
+            continue
 
         # Track quoting
         if ch == "'" and not in_double_quote and paren_depth == 0:
@@ -521,24 +529,51 @@ def decide(command, settings):
     return None, None
 
 
+def _verbose_enabled():
+    """Check if verbose logging is enabled.
+
+    Controlled by SMART_APPROVE_VERBOSE env var:
+      "1", "true", "yes" → enabled
+      "0", "false", "no", unset → disabled
+    """
+    return os.environ.get("SMART_APPROVE_VERBOSE", "").lower() in ("1", "true", "yes")
+
+
+def log(msg):
+    """Write verbose log to stderr when enabled."""
+    if _verbose_enabled():
+        print(f"[smart-approve] {msg}", file=sys.stderr)
+
+
 def main():
     try:
         input_data = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError):
+        log("no valid JSON on stdin, skipping")
         sys.exit(0)
 
     tool_name = input_data.get("tool_name", "")
     if tool_name != "Bash":
+        log(f"tool={tool_name}, not Bash — skipping")
         sys.exit(0)
 
     command = input_data.get("tool_input", {}).get("command", "")
     if not command:
+        log("empty command, skipping")
         sys.exit(0)
+
+    cmd_preview = command[:80].replace('\n', '\\n')
+    log(f"checking: {cmd_preview}{'...' if len(command) > 80 else ''}")
 
     settings_path = os.environ.get("CLAUDE_SETTINGS_PATH")
     settings = load_merged_settings(settings_path)
 
+    sub_commands = decompose_command(command)
+    log(f"sub-commands: {sub_commands[:5]}{'...' if len(sub_commands) > 5 else ''}")
+
     decision, reason = decide(command, settings)
+
+    log(f"decision={decision or 'passthrough'} reason={reason or 'no pattern matched'}")
 
     if decision is not None:
         output = {
