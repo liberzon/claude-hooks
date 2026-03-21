@@ -529,6 +529,9 @@ def decide(command, settings):
     return None, None
 
 
+_log_lines = []
+
+
 def _verbose_enabled():
     """Check if verbose logging is enabled.
 
@@ -540,9 +543,19 @@ def _verbose_enabled():
 
 
 def log(msg):
-    """Write verbose log to stderr when enabled."""
+    """Collect verbose log line when enabled."""
     if _verbose_enabled():
-        print(f"[smart-approve] {msg}", file=sys.stderr)
+        _log_lines.append(msg)
+
+
+def _build_reason(reason):
+    """Build the permissionDecisionReason, appending verbose logs if any."""
+    if not _log_lines:
+        return reason
+    verbose = " | ".join(_log_lines)
+    if reason:
+        return f"{reason} | {verbose}"
+    return verbose
 
 
 def main():
@@ -580,10 +593,9 @@ def main():
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": decision,
+                "permissionDecisionReason": _build_reason(reason),
             }
         }
-        if reason:
-            output["hookSpecificOutput"]["permissionDecisionReason"] = reason
         json.dump(output, sys.stdout)
         sys.stdout.write("\n")
     # else: silent exit — fall through to normal prompting

